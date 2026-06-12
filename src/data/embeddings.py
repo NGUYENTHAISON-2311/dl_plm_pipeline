@@ -80,7 +80,9 @@ class _ProtT5Encoder:
         self.torch = torch
         self.device = device
         self.tok = T5Tokenizer.from_pretrained(model_name, do_lower_case=False)
-        self.model = T5EncoderModel.from_pretrained(model_name).to(device).eval()
+        # .float() forces a single fp32 dtype: some checkpoints load mixed fp16/fp32
+        # (transformers v5 "auto" dtype) which crashes with "expected Float found Half".
+        self.model = T5EncoderModel.from_pretrained(model_name).to(device).float().eval()
 
     def embed(self, sequence: str) -> np.ndarray:
         return self.embed_batch([sequence])[0]
@@ -107,7 +109,8 @@ class _ESM2Encoder:
         self.torch = torch
         self.device = device
         self.tok = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(device).eval()
+        # Force fp32 throughout (avoids the mixed Half/Float LayerNorm crash on v5).
+        self.model = AutoModel.from_pretrained(model_name).to(device).float().eval()
 
     def embed(self, sequence: str) -> np.ndarray:
         return self.embed_batch([sequence])[0]
