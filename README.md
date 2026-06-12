@@ -12,6 +12,12 @@ derives a **sequence-level** AMYLOID / NONAMYLOID call from the residue scores.
    `>10` consecutive residues scoring `>0.5`**. This is a deterministic rule
    (`src/evaluation/classify.py`) on top of task 1, with both thresholds in config.
 
+At **benchmark** time the PLMs run inference **directly on each `window_len`-residue
+sliding window** (`score_sequence_live` + `PLMEmbedder`): every window is embedded live
+by ProtT5 + ESM2 (GPU-batched), scored by the ensemble, and overlapping window scores are
+aggregated into a per-residue profile — no precomputed benchmark cache. Only the short
+**training** peptides are embedded once and cached (Stage 1).
+
 ## Pipeline
 
 | Stage | Script | What it does |

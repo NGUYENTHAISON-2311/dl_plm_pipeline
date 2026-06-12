@@ -83,14 +83,20 @@ class _ProtT5Encoder:
         self.model = T5EncoderModel.from_pretrained(model_name).to(device).eval()
 
     def embed(self, sequence: str) -> np.ndarray:
+        return self.embed_batch([sequence])[0]
+
+    def embed_batch(self, sequences: List[str]) -> List[np.ndarray]:
+        """Embed several sequences in ONE padded forward pass (GPU-efficient)."""
         # ProtT5 expects space-separated residues with rare AAs mapped to X.
-        spaced = " ".join(re.sub(r"[UZOB]", "X", sequence))
-        enc = self.tok(spaced, return_tensors="pt", add_special_tokens=True)
+        spaced = [" ".join(re.sub(r"[UZOB]", "X", s)) for s in sequences]
+        enc = self.tok(spaced, return_tensors="pt", padding=True, add_special_tokens=True)
         enc = {k: v.to(self.device) for k, v in enc.items()}
         with self.torch.no_grad():
-            out = self.model(**enc).last_hidden_state  # (1, L+1, 1024)
-        emb = out[0].cpu().numpy()
-        return emb[: len(sequence)]  # drop the trailing </s>, keep L residues
+            out = self.model(**enc).last_hidden_state  # (B, Lmax, 1024)
+        out = out.cpu().numpy()
+        # Real residue tokens come first; the trailing </s> and padding are dropped by
+        # keeping exactly len(seq) positions per row.
+        return [out[i, : len(s)] for i, s in enumerate(sequences)]
 
 
 class _ESM2Encoder:
@@ -104,12 +110,17 @@ class _ESM2Encoder:
         self.model = AutoModel.from_pretrained(model_name).to(device).eval()
 
     def embed(self, sequence: str) -> np.ndarray:
-        enc = self.tok(sequence, return_tensors="pt", add_special_tokens=True)
+        return self.embed_batch([sequence])[0]
+
+    def embed_batch(self, sequences: List[str]) -> List[np.ndarray]:
+        """Embed several sequences in ONE padded forward pass (GPU-efficient)."""
+        enc = self.tok(list(sequences), return_tensors="pt", padding=True, add_special_tokens=True)
         enc = {k: v.to(self.device) for k, v in enc.items()}
         with self.torch.no_grad():
-            out = self.model(**enc).last_hidden_state  # (1, L+2, 1280)
-        emb = out[0].cpu().numpy()
-        return emb[1 : len(sequence) + 1]  # strip <cls>/<eos>, keep L residues
+            out = self.model(**enc).last_hidden_state  # (B, Lmax, 1280)
+        out = out.cpu().numpy()
+        # ESM2 adds <cls> at position 0 and <eos> after the sequence; residues are 1..L.
+        return [out[i, 1 : len(s) + 1] for i, s in enumerate(sequences)]
 
 
 def generate_embeddings(sequences: Iterable[str], cfg: dict) -> None:
@@ -187,3 +198,34 @@ def generate_embeddings_dual_gpu(
     for seq in todo:
         cache.put(seq, prott5_out[seq], esm2_out[seq])
     log.info("Dual-GPU embedding complete -> %s", cache.path)
+
+
+class PLMEmbedder:
+    """Runs ProtT5 + ESM2 **live** on sequences/windows (no cache), GPU-batched.
+
+    Used by the benchmark so the PLMs perform inference directly on each sliding window
+    (e.g. 18-residue windows) instead of slicing precomputed full-sequence embeddings.
+    ProtT5 and ESM2 may sit on different GPUs (e.g. Kaggle 2x T4) via the device args.
+    """
+
+    def __init__(self, cfg: dict, device: str = "auto",
+                 device_prott5: str | None = None, device_esm2: str | None = None):
+        dp = device_prott5 or _resolve_device(device)
+        de = device_esm2 or _resolve_device(device)
+        log.info("PLMEmbedder: ProtT5->%s, ESM2->%s", dp, de)
+        self.prott5 = _ProtT5Encoder(cfg["embeddings"]["prott5"]["model"], dp)
+        self.esm2 = _ESM2Encoder(cfg["embeddings"]["esm2"]["model"], de)
+
+    def embed_many(self, sequences: List[str], batch_size: int = 64) -> List[Dict[str, np.ndarray]]:
+        """Embed many (typically equal-length window) sequences in batches.
+
+        Returns one dict per input: ``{"prott5": (L,1024), "esm2": (L,1280)}``.
+        """
+        seqs = list(sequences)
+        out: List[Dict[str, np.ndarray]] = []
+        for i in range(0, len(seqs), batch_size):
+            chunk = seqs[i : i + batch_size]
+            p_list = self.prott5.embed_batch(chunk)
+            e_list = self.esm2.embed_batch(chunk)
+            out.extend({"prott5": p, "esm2": e} for p, e in zip(p_list, e_list))
+        return out

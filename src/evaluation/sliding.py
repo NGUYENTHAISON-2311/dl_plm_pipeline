@@ -3,6 +3,12 @@
 Windows of length ``window_len`` are slid across the sequence with the configured
 stride. Each window is scored by the ensemble; overlapping windows that cover the same
 residue are aggregated (mean by default) to produce one [0,1] profile per sequence.
+
+Two paths:
+- ``score_sequence_live`` (benchmark default): the PLMs run inference DIRECTLY on each
+  window (e.g. 18 residues) at score time via a ``PLMEmbedder`` — no cache.
+- ``score_sequence`` / ``score_sequence_detailed``: read precomputed embeddings from the
+  HDF5 cache (faster reruns, but the PLM ran earlier in scripts/01).
 """
 from __future__ import annotations
 
@@ -10,9 +16,47 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from ..data.embeddings import EmbeddingCache, seq_key
+from ..data.embeddings import EmbeddingCache, PLMEmbedder, seq_key
 from ..training.ensemble import Ensemble
-from ..utils.windows import window_starts
+from ..utils.windows import window_starts, window_subsequences
+
+
+def score_sequence_live(
+    sequence: str, embedder: PLMEmbedder, ensemble: Ensemble, cfg: dict
+) -> Tuple[np.ndarray, List[Dict]]:
+    """Benchmark scoring with the PLMs run DIRECTLY on each sliding window.
+
+    For a full sequence: enumerate windows of length ``window_len`` (stride from config),
+    run ProtT5 + ESM2 inference on each window subsequence (GPU-batched via the embedder),
+    score every window with the ensemble, then aggregate overlapping window scores into a
+    per-residue profile in [0,1]. Returns ``(profile, windows)`` where ``windows`` lists
+    each window's start/end and per-residue scores.
+    """
+    L = len(sequence)
+    win = cfg["window_len"]
+    stride = cfg["inference"]["window_stride"]
+    agg = cfg["inference"].get("seq_overlap_agg", "mean")
+    batch = cfg["inference"].get("plm_batch_size", 64)
+
+    subs = window_subsequences(sequence, win, stride)          # [(start, length, subseq)]
+    embs = embedder.embed_many([s for _, _, s in subs], batch_size=batch)  # PLM per window
+    win_scores = ensemble.predict_window_batch(embs)           # [(length_i,)]
+
+    score_sum = np.zeros(L, dtype=np.float64)
+    score_max = np.zeros(L, dtype=np.float64)
+    count = np.zeros(L, dtype=np.float64)
+    windows: List[Dict] = []
+    for (start, length, _), ws in zip(subs, win_scores):
+        idx = slice(start, start + length)
+        score_sum[idx] += ws
+        score_max[idx] = np.maximum(score_max[idx], ws)
+        count[idx] += 1
+        windows.append({"start": int(start), "end": int(start + length),
+                        "scores": [round(float(x), 4) for x in ws]})
+
+    count[count == 0] = 1
+    profile = (score_max if agg == "max" else score_sum / count).astype(np.float32)
+    return profile, windows
 
 
 def _window_embeddings(

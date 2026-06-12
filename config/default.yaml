@@ -72,6 +72,7 @@ ensemble:
 
 inference:
   window_stride: 1
+  plm_batch_size: 64        # windows embedded per PLM forward pass during live benchmark
   residue_threshold: 0.5
   min_consecutive: 10       # sequence is AMYLOID iff a positive run length > this value
   seq_overlap_agg: mean     # how overlapping window scores combine per residue: mean | max

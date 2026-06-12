@@ -42,6 +42,32 @@ class Ensemble:
             preds.append(m.model.predict({"prott5_in": Xp, "esm2_in": Xe}, verbose=0))
         return np.mean(preds, axis=0)
 
+    def predict_window_batch(self, emb_list: List[Dict[str, np.ndarray]]) -> List[np.ndarray]:
+        """Mean per-residue score for MANY windows at once (batched per member).
+
+        ``emb_list[i]`` holds ``prott5`` (Li,1024) and ``esm2`` (Li,1280) for window i.
+        Returns a list of arrays, one ``(Li,)`` score vector per window. Each ensemble
+        member reduces + predicts all windows in a single batch, so this is far faster
+        than calling ``predict_window`` per window during the benchmark.
+        """
+        if not emb_list:
+            return []
+        n = len(emb_list)
+        lengths = [e["prott5"].shape[0] for e in emb_list]
+        sums = [np.zeros(L, dtype=np.float64) for L in lengths]
+        for m in self.members:
+            xp = np.zeros((n, self.window_len, m.dual.prott5.out_dim), dtype=np.float32)
+            xe = np.zeros((n, self.window_len, m.dual.esm2.out_dim), dtype=np.float32)
+            for i, e in enumerate(emb_list):
+                L = lengths[i]
+                xp[i, :L] = m.dual.prott5.transform(e["prott5"])[:L]
+                xe[i, :L] = m.dual.esm2.transform(e["esm2"])[:L]
+            preds = m.model.predict({"prott5_in": xp, "esm2_in": xe}, verbose=0)  # (n, window_len)
+            for i in range(n):
+                sums[i] += preds[i, : lengths[i]]
+        k = len(self.members)
+        return [s / k for s in sums]
+
     def predict_window(self, emb: Dict[str, np.ndarray]) -> np.ndarray:
         """Mean per-residue score for one window given its raw embeddings dict.
 
