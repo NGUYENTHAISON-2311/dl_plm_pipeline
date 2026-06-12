@@ -72,6 +72,23 @@ python scripts/04_evaluate_benchmark.py
 pip install pytest && pytest tests/
 ```
 
+## Running on Kaggle (2× T4 GPUs)
+
+Open [notebooks/kaggle_run_pipeline.ipynb](notebooks/kaggle_run_pipeline.ipynb) on Kaggle
+(Create → Notebook → File → Import, or upload it). Then:
+
+1. **Settings → Accelerator → `GPU T4 x2`**
+2. **Settings → Internet → On** (to clone this repo + download the PLM weights)
+3. **Add Input → your Dataset** containing the `New_dataset/` JSON files
+
+Run all cells. Both T4s are used: **Stage 1 embeds ProtT5 on GPU 0 and ESM2 on GPU 1 in
+parallel** (`generate_embeddings_dual_gpu`). Set `USE_MIRRORED = True` in the run-config
+cell to also distribute Keras training across both GPUs (rarely helps — the models are
+small). Outputs land in `/kaggle/working/results/<run_id>/{training,benchmark}/`.
+
+Locally, multi-GPU training is controlled by `train.distribute: none | mirrored` in the
+config.
+
 ## Configuration
 
 `config/default.yaml` holds paths, embedding models, reducer, CV, imbalance, ensemble
