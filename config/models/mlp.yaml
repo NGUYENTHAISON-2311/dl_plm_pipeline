@@ -1,0 +1,9 @@
+# Deeper per-residue MLP (no positional context).
+name: mlp
+encoder: dense
+grid:
+  reducer_dim: [64, 128]
+  units: [[128, 64], [256, 128, 64]]
+  dropout: [0.3, 0.5]
+  learning_rate: [0.001, 0.0005]
+  batch_size: [64]

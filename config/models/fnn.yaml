@@ -1,0 +1,10 @@
+# Shallow per-residue feed-forward baseline (no positional context).
+name: fnn
+encoder: dense
+# Each value list is a grid axis; grid_search expands the Cartesian product.
+grid:
+  reducer_dim: [32, 64]
+  units: [[64], [128]]        # one Dense block per residue
+  dropout: [0.3, 0.5]
+  learning_rate: [0.001]
+  batch_size: [64]

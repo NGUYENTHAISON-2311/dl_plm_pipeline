@@ -1,0 +1,12 @@
+# Transformer-lite: Conv1D -> MultiHeadSelfAttention. Per-residue output.
+name: attention
+encoder: attention
+grid:
+  reducer_dim: [64]
+  filters: [[64]]
+  kernel_size: [3]
+  num_heads: [2, 4]
+  key_dim: [32]
+  dropout: [0.3]
+  learning_rate: [0.001]
+  batch_size: [64]

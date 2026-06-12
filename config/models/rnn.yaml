@@ -1,0 +1,10 @@
+# Bidirectional RNN over residues. return_sequences -> per-residue output.
+name: rnn
+encoder: rnn
+grid:
+  reducer_dim: [64]
+  rnn_type: [lstm, gru]
+  units: [64, 128]
+  dropout: [0.3]
+  learning_rate: [0.001]
+  batch_size: [64]

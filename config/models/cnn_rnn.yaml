@@ -1,0 +1,12 @@
+# Hybrid: Conv1D (local) -> BiLSTM (global). Per-residue output.
+name: cnn_rnn
+encoder: cnn_rnn
+grid:
+  reducer_dim: [64]
+  filters: [[64]]
+  kernel_size: [3, 5]
+  rnn_type: [lstm]
+  units: [64]
+  dropout: [0.3]
+  learning_rate: [0.001]
+  batch_size: [64]

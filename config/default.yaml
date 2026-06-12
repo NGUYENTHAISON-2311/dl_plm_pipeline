@@ -1,0 +1,77 @@
+# Default configuration for the amyloid residue-scoring / classification pipeline.
+# Every stage reads this file; per-model grids live in config/models/*.yaml.
+
+seed: 42
+
+paths:
+  train_pos: New_dataset/Training/train_core_set_KA.json
+  train_neg: New_dataset/Training/disordered_regions_no_core_overlaps_filtered_clustered.json
+  classification_benchmark: New_dataset/Benchmark/new_representative_classification_benchmark_KA.json
+  position_benchmark: New_dataset/Benchmark/new_representative_positive_benchmark_KA.json
+  processed_dir: data/processed
+  results_dir: results
+
+embeddings:
+  prott5:
+    model: Rostlab/prot_t5_xl_half_uniref50-enc
+    dim: 1024
+  esm2:
+    model: facebook/esm2_t33_650M_UR50D   # -> facebook/esm2_t30_150M_UR50D for lighter compute
+    dim: 1280
+  cache: data/processed/embeddings.h5
+  device: auto          # auto | cpu | cuda
+  batch_residues: 4096  # max residues per forward pass when batching
+  # false (default): embed each full benchmark sequence ONCE, slice per-residue vectors
+  #   per window (fast; windows share full-sequence context).
+  # true: embed every sliding window as its own PLM input (matches how the short training
+  #   peptides were embedded; much slower, many more PLM calls). Re-run scripts/01 after
+  #   changing this so the needed window embeddings are generated.
+  embed_windows_standalone: true
+
+# Per-residue input window. Training peptides are padded/truncated to this length.
+window_len: 18
+
+# Dimensionality reduction applied per branch. Fit on TRAIN FOLD ONLY.
+reducer:
+  type: pca             # pca | autoencoder | none
+  dim: 64               # target dim per branch (grid-searched in model configs)
+  whiten: false
+
+fusion: late            # two-branch late fusion (only mode implemented)
+
+cv:
+  scheme: stratified    # stratified | group
+  n_splits: 5
+  group_by_core: false  # if true, fold split groups by core_id (cluster-stratified)
+  shuffle: true
+  # Off-by-default alternative training strategy (positive-set split + fine-tune).
+  positive_set_finetune: false
+
+imbalance:
+  strategy: class_weight   # class_weight | focal | undersample
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+
+train:
+  epochs: 50
+  batch_size: 64
+  optimizer: adam
+  learning_rate: 0.001
+  early_stopping_patience: 12
+  reduce_lr_patience: 6
+  monitor: val_auprc      # maximized
+  distribute: none        # none | mirrored (multi-GPU Keras training; see utils/distribute.py)
+
+gridsearch:
+  metric: residue_auprc
+  models: [fnn, mlp, cnn, rnn, cnn_rnn, attention]
+
+ensemble:
+  members: best_per_model   # best_per_model | all
+  agg: mean_prob            # mean_prob | logistic_stack
+
+inference:
+  window_stride: 1
+  residue_threshold: 0.5
+  min_consecutive: 10       # sequence is AMYLOID iff a positive run length > this value
+  seq_overlap_agg: mean     # how overlapping window scores combine per residue: mean | max
